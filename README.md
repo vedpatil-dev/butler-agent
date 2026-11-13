@@ -4,6 +4,22 @@ A local-first AI coding agent and terminal operator. Run **local models on your 
 
 ---
 
+## Screenshots
+
+### Live Chat (`gemini-4-hydrogen-low` via `antigravity`)
+![Butler live chat with Gemini 4 Hydrogen (Low)](assets/cli-chat-conversation.png)
+
+### Unified `/model` Picker (NPU + Cloud Models)
+![Butler unified model picker](assets/cli-model-picker.png)
+
+### Interactive Terminal UI (`butler chat`)
+![Butler interactive chat prompt](assets/cli-chat.png)
+
+### Hardware & Provider Detection (`butler providers` & `butler setup`)
+![Butler providers and setup](assets/cli-providers-setup.png)
+
+---
+
 ## Install (`v0.1.0-beta` — standalone binary, no Python required)
 
 ### Linux (Fedora, Ubuntu, Debian, Arch, Alpine — `x86_64` & `arm64`) & macOS
