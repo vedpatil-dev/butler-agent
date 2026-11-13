@@ -8,14 +8,14 @@ A local-first AI coding agent and terminal operator. Run **local models on your 
 
 ### Linux (Fedora, Ubuntu, Debian, Arch, Alpine — `x86_64` & `arm64`) & macOS
 ```sh
-curl -fsSL https://raw.githubusercontent.com/vedpatil-dev/butler-agent/V1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/vedpatil-dev/butler-agent/v0.1.0-beta/install.sh | sh
 ```
 * Automatically detects `x86_64` vs `arm64` and `glibc` vs `musl` (Alpine).
 * On macOS, downloads and installs from `Butler-macOS.dmg`.
 
 ### Windows (PowerShell)
 ```powershell
-irm https://raw.githubusercontent.com/vedpatil-dev/butler-agent/V1/install.ps1 | iex
+irm https://raw.githubusercontent.com/vedpatil-dev/butler-agent/v0.1.0-beta/install.ps1 | iex
 ```
 
 ### Direct downloads
@@ -95,7 +95,7 @@ Type `/` for live auto-complete or `@` to mention project files:
 Requires Python **3.12+** and `uv`:
 
 ```sh
-git clone -b V1 https://github.com/vedpatil-dev/butler-agent.git
+git clone -b v0.1.0-beta https://github.com/vedpatil-dev/butler-agent.git
 cd butler-agent
 uv sync
 .venv/bin/python -m pytest -m "not llm" -q
