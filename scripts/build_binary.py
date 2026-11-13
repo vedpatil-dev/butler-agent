@@ -24,8 +24,12 @@ def main():
         "--name", "butler",
         "--collect-all", "uvicorn",
         "--collect-all", "fastapi",
-        "--collect-all", "mcp",
+        "--collect-submodules", "mcp.client",
+        "--collect-submodules", "mcp.shared",
+        "--collect-submodules", "mcp.types",
+        "--exclude-module", "mcp.cli",
         "--collect-all", "prompt_toolkit",
+        "--paths", str(ROOT),
     ]
     for src, dst in datas:
         if src.exists():
