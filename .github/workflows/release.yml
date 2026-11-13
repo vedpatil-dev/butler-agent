@@ -65,21 +65,18 @@ jobs:
             artifact: butler-linux-arm64-musl
 
     runs-on: ${{ matrix.os }}
-    container:
-      image: python:3.12-alpine
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build deps & PyInstaller
+      - name: Build standalone musl binary in Alpine container
         run: |
-          apk add --no-cache build-base binutils zlib-dev libffi-dev openssl-dev rust cargo
-          pip install --no-cache-dir . pyinstaller
-
-      - name: Build standalone musl binary
-        run: |
-          python scripts/build_binary.py
-          cp dist/butler "${{ matrix.artifact }}"
+          docker run --rm -v "$PWD:/work" -w /work python:3.12-alpine sh -ec '
+            apk add --no-cache build-base binutils zlib-dev libffi-dev openssl-dev rust cargo
+            pip install --no-cache-dir . pyinstaller
+            python scripts/build_binary.py
+            cp dist/butler "${{ matrix.artifact }}"
+          '
 
       - uses: actions/upload-artifact@v4
         with:
