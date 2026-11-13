@@ -210,3 +210,51 @@ def run_setup(install: bool = False, yes: bool = False, target: str | None = Non
                 print(f"  ! command failed with exit code {r.returncode}")
                 rc = rc or r.returncode
     return rc
+
+
+def run_uninstall(purge: bool = False, yes: bool = False) -> int:
+    """Remove installed butler/agent binaries (and optionally local state with --purge)."""
+    from . import config
+    targets: list[Path] = []
+    if platform.system() == "Windows":
+        win_bin = Path.home() / "AppData/Local/Programs/Butler/butler.exe"
+        if win_bin.exists(): targets.append(win_bin)
+    else:
+        for name in ("butler", "agent"):
+            p = Path.home() / ".local/bin" / name
+            if p.exists() or p.is_symlink(): targets.append(p)
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable)
+        if exe not in targets and exe.exists(): targets.append(exe)
+
+    if not targets and not (purge and config.STATE.exists()):
+        print("Nothing to uninstall.")
+        return 0
+
+    print("Will remove:")
+    for t in targets: print(f"  {t}")
+    if purge and config.STATE.exists(): print(f"  {config.STATE} (all conversations, history, and tokens)")
+
+    if not yes:
+        ans = input("Proceed with uninstall? [y/N] ").strip().lower()
+        if ans not in ("y", "yes"):
+            print("Cancelled.")
+            return 0
+
+    for t in targets:
+        try:
+            t.unlink(missing_ok=True)
+            print(f"Removed {t}")
+        except OSError:
+            if platform.system() == "Windows":
+                subprocess.Popen(["cmd", "/c", f'ping 127.0.0.1 -n 2 > nul & del /f /q "{t}"'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"Scheduled removal of {t}")
+            else:
+                raise
+    if purge and config.STATE.exists():
+        shutil.rmtree(config.STATE, ignore_errors=True)
+        print(f"Removed {config.STATE}")
+    elif config.STATE.exists():
+        print(f"Kept local data in {config.STATE} (pass --purge to remove)")
+    return 0

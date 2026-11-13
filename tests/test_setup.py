@@ -121,3 +121,16 @@ def test_run_setup_install_executes_commands(monkeypatch, capsys):
     rc = setup.run_setup(install=True, yes=True, target="apple-silicon")
     assert rc == 0
     assert ran == [["brew", "install", "ollama"], ["python3", "-m", "pip", "install", "mlx-lm"]]
+
+
+def test_run_uninstall_removes_binaries(monkeypatch, tmp_path):
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "butler").write_text("bin")
+    (bin_dir / "agent").symlink_to(bin_dir / "butler")
+    rc = setup.run_uninstall(purge=False, yes=True)
+    assert rc == 0
+    assert not (bin_dir / "butler").exists()
+    assert not (bin_dir / "agent").exists()

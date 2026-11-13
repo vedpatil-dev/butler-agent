@@ -88,6 +88,11 @@ def cmd_setup(a):
     raise SystemExit(run_setup(install=a.install, yes=a.yes, target=a.target, as_json=a.json))
 
 
+def cmd_uninstall(a):
+    from .setup import run_uninstall
+    raise SystemExit(run_uninstall(purge=a.purge, yes=a.yes))
+
+
 def _pid():
     try:
         pid = int(PID.read_text())
@@ -752,6 +757,10 @@ def main():
     s.add_argument("--target", help="limit setup to one accelerator id (e.g. nvidia-cuda, amd-gpu, intel-npu, apple-silicon)")
     s.add_argument("--json", action="store_true", help="print detected hardware and setup plan as JSON")
     s.set_defaults(f=cmd_setup)
+    s = sub.add_parser("uninstall", help="remove installed butler/agent binaries")
+    s.add_argument("--purge", action="store_true", help="also delete local conversations, history, and tokens")
+    s.add_argument("--yes", "-y", action="store_true", help="skip confirmation prompt")
+    s.set_defaults(f=cmd_uninstall)
     for name, f in (("chat", cmd_chat), ("run", cmd_run)):
         s = sub.add_parser(name, help="interactive session" if name == "chat" else "run one task and exit")
         if name == "run": s.add_argument("task"); s.add_argument("--json", action="store_true", help="print one JSON event per line (for scripts); exit 0 ok, 1 error, 2 action denied")
