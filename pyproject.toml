@@ -1,6 +1,6 @@
 [project]
 name = "local-agent"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Local agentic coding assistant on Ollama + Qwen3.5-9B"
 requires-python = ">=3.12"
 dependencies = [

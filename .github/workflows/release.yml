@@ -1,0 +1,65 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: butler-linux-x86_64
+            src: dist/butler
+          - os: windows-latest
+            artifact: butler-windows-x86_64.exe
+            src: dist/butler.exe
+          - os: macos-latest
+            artifact: Butler-macOS.dmg
+            src: dist/Butler-macOS.dmg
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies & PyInstaller
+        run: |
+          uv sync
+          uv pip install pyinstaller
+
+      - name: Build standalone binary
+        run: uv run python scripts/build_binary.py
+
+      - name: Prepare release asset
+        shell: bash
+        run: cp "${{ matrix.src }}" "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*

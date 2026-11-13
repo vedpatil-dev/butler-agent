@@ -1,9 +1,10 @@
 """Settings from environment variables (optionally loaded from .env in the project root)."""
 import os
 import re
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
 def parse_env(text: str) -> dict:
