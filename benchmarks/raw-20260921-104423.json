@@ -1,0 +1,132 @@
+[
+ {
+  "backend": "cpu",
+  "url": "http://127.0.0.1:11434",
+  "num_gpu_opt": null,
+  "model": "qwen3.5:9b",
+  "quant": "Q4_K_M",
+  "context": 8192,
+  "runtime": "ollama",
+  "load_s": 10.0,
+  "prompt_tokens": 589,
+  "prompt_tps": 57.4,
+  "gen_tps": 5.8,
+  "ttft_s": 10.55,
+  "latency_s": 31.1,
+  "model_ram_gb": 6.03,
+  "gpu_offload_pct_reported_by_ollama": 0,
+  "sys_ram_available_before_gb": 5.9,
+  "sys_ram_available_after_gb": 5.7,
+  "gpu_busy_peak_pct": 31.0,
+  "gpu_busy_avg_pct": 10.5,
+  "gtt_used_peak_gb": 1.2,
+  "temp_peak_c": 53.0,
+  "gpu_power_avg_w": 26.2,
+  "npu_states_seen": [
+   "suspended"
+  ],
+  "runs": [
+   {
+    "ttft_s": 10.55,
+    "latency_s": 31.6,
+    "prompt_tokens": 589,
+    "gen_tokens": 116,
+    "prompt_s": 10.268824,
+    "gen_s": 21.059367,
+    "load_s": 0.253029034,
+    "total_s": 31.611917767,
+    "prompt_tps": 57.4,
+    "gen_tps": 5.5
+   },
+   {
+    "ttft_s": 10.78,
+    "latency_s": 31.1,
+    "prompt_tokens": 588,
+    "gen_tokens": 118,
+    "prompt_s": 10.460765,
+    "gen_s": 20.301633,
+    "load_s": 0.27612741,
+    "total_s": 31.087312726,
+    "prompt_tps": 56.2,
+    "gen_tps": 5.8
+   },
+   {
+    "ttft_s": 10.32,
+    "latency_s": 29.5,
+    "prompt_tokens": 587,
+    "gen_tokens": 111,
+    "prompt_s": 10.007086,
+    "gen_s": 19.160102,
+    "load_s": 0.275685953,
+    "total_s": 29.483913226,
+    "prompt_tps": 58.7,
+    "gen_tps": 5.8
+   }
+  ]
+ },
+ {
+  "backend": "igpu-vulkan",
+  "url": "http://127.0.0.1:11435",
+  "num_gpu_opt": null,
+  "model": "qwen3.5:9b",
+  "quant": "Q4_K_M",
+  "context": 8192,
+  "runtime": "ollama",
+  "load_s": 9.0,
+  "prompt_tokens": 586,
+  "prompt_tps": 126.0,
+  "gen_tps": 5.2,
+  "ttft_s": 5.13,
+  "latency_s": 27.1,
+  "model_ram_gb": 5.49,
+  "gpu_offload_pct_reported_by_ollama": 100,
+  "sys_ram_available_before_gb": 6.0,
+  "sys_ram_available_after_gb": 5.5,
+  "gpu_busy_peak_pct": 100.0,
+  "gpu_busy_avg_pct": 96.2,
+  "gtt_used_peak_gb": 8.0,
+  "temp_peak_c": 73.0,
+  "gpu_power_avg_w": 35.2,
+  "npu_states_seen": [
+   "suspended"
+  ],
+  "runs": [
+   {
+    "ttft_s": 5.13,
+    "latency_s": 28.0,
+    "prompt_tokens": 586,
+    "gen_tokens": 119,
+    "prompt_s": 4.652237,
+    "gen_s": 22.915394,
+    "load_s": 0.225009639,
+    "total_s": 28.042442693,
+    "prompt_tps": 126.0,
+    "gen_tps": 5.2
+   },
+   {
+    "ttft_s": 4.9,
+    "latency_s": 25.4,
+    "prompt_tokens": 588,
+    "gen_tokens": 107,
+    "prompt_s": 4.418166,
+    "gen_s": 20.510465,
+    "load_s": 0.216280845,
+    "total_s": 25.406770285,
+    "prompt_tps": 133.1,
+    "gen_tps": 5.2
+   },
+   {
+    "ttft_s": 5.4,
+    "latency_s": 27.1,
+    "prompt_tokens": 590,
+    "gen_tokens": 116,
+    "prompt_s": 4.79913,
+    "gen_s": 21.657874,
+    "load_s": 0.227634266,
+    "total_s": 27.051672452,
+    "prompt_tps": 122.9,
+    "gen_tps": 5.4
+   }
+  ]
+ }
+]

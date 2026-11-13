@@ -1,0 +1,27 @@
+{
+  "_comment": "MCP servers the agent connects to (stdio). Add any server here - no source changes needed. Tools listed in \"read\" run without confirmation; all others ask first. ${ROOT} and ${PYTHON} are substituted.",
+  "servers": {
+    "local": {
+      "enabled": false,
+      "command": "${PYTHON}",
+      "args": ["${ROOT}/mcp/server.py"],
+      "read": ["list_files", "read_file", "search_files", "git_status", "git_diff", "git_log", "git_branch"]
+    },
+    "postgres": {
+      "enabled": false,
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:pass@localhost/db"]
+    },
+    "github": {
+      "enabled": false,
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": ""}
+    },
+    "playwright": {
+      "enabled": false,
+      "command": "npx", "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "docker": {
+      "enabled": false,
+      "command": "uvx", "args": ["mcp-server-docker"]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0 -- /home/ved1345/Projects/local-agent/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/ved1345/Projects/local-agent
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collecting ... collected 52 items / 45 deselected / 7 selected
+
+tests/test_agent.py::test_live_one_step PASSED                           [ 14%]
+tests/test_agent.py::test_live_multi_step_fix_bug_and_run_tests PASSED   [ 28%]
+tests/test_llm.py::test_basic_generation PASSED                          [ 42%]
+tests/test_llm.py::test_coding PASSED                                    [ 57%]
+tests/test_llm.py::test_json_output PASSED                               [ 71%]
+tests/test_llm.py::test_tool_calling PASSED                              [ 85%]
+tests/test_llm.py::test_streaming PASSED                                 [100%]
+
+============================== slowest durations ===============================
+97.33s call     tests/test_agent.py::test_live_multi_step_fix_bug_and_run_tests
+42.54s call     tests/test_llm.py::test_coding
+29.75s call     tests/test_agent.py::test_live_one_step
+8.45s call     tests/test_llm.py::test_tool_calling
+5.77s call     tests/test_llm.py::test_json_output
+5.31s call     tests/test_llm.py::test_streaming
+2.56s call     tests/test_llm.py::test_basic_generation
+0.04s setup    tests/test_agent.py::test_live_one_step
+0.02s setup    tests/test_agent.py::test_live_multi_step_fix_bug_and_run_tests
+
+(12 durations < 0.005s hidden.  Use -vv to show these durations.)
+================= 7 passed, 45 deselected in 192.17s (0:03:12) =================

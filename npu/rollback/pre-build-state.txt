@@ -1,0 +1,6 @@
+date: 2026-10-14T11:58:58+05:30
+kernel: 7.2.10-200.fc44.x86_64
+/lib/modules/7.2.10-200.fc44.x86_64/kernel/drivers/accel/amdxdna/amdxdna.ko.xz
+amdxdna               311296  0
+amd_pmf               110592  1 amdxdna
+gpu_sched              77824  2 amdxdna,amdgpu

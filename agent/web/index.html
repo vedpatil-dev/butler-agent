@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local Agent</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bd:#e5e7eb;--pn:#f6f7f9;--ac:#2563eb;--ok:#15803d;--er:#b91c1c;--wa:#b45309}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e6e6e6;--mut:#9aa0aa;--bd:#2a2e37;--pn:#181b22;--ac:#5b8def;--ok:#4ade80;--er:#f87171;--wa:#fbbf24}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg);height:100vh;display:grid;grid-template-columns:220px 1fr 300px;grid-template-rows:auto 1fr}
+header{grid-column:1/-1;padding:8px 14px;border-bottom:1px solid var(--bd);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header b{font-size:15px}#st{color:var(--mut);font-size:12px}
+aside{background:var(--pn);border-right:1px solid var(--bd);overflow:auto;padding:8px}
+aside.r{border-right:0;border-left:1px solid var(--bd)}
+aside h4{margin:6px 4px;font-size:11px;text-transform:uppercase;color:var(--mut)}
+.conv{padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv:hover{background:var(--bd)}
+main{display:flex;flex-direction:column;min-height:0}
+#log{flex:1;overflow:auto;padding:14px}
+.m{margin:0 0 12px;white-space:pre-wrap;word-wrap:break-word}.m.u{color:var(--ac);font-weight:600}
+#task{padding:6px 14px;border-top:1px solid var(--bd);color:var(--mut);font-size:12px;min-height:28px}
+form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--bd)}
+textarea{flex:1;resize:none;height:56px;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+button{padding:0 16px;border:1px solid var(--bd);border-radius:8px;background:var(--ac);color:#fff;cursor:pointer;font:inherit}
+button.s{background:var(--er)}button:disabled{opacity:.4;cursor:default}
+.a{font-size:12px;padding:4px 6px;border-left:3px solid var(--bd);margin:4px 0}.a.t{border-color:var(--ac)}.a.ok{border-color:var(--ok)}.a.er{border-color:var(--er)}
+.a small{display:block;color:var(--mut);white-space:pre-wrap;max-height:90px;overflow:auto}
+.cf{white-space:pre-wrap;word-break:break-all;background:var(--pn);border:1px solid var(--wa);border-radius:8px;padding:8px;margin:8px 0}.cf.d{border-color:var(--er)}.cf button{padding:2px 12px;margin-right:6px}
+@media(max-width:800px){body{grid-template-columns:1fr}aside{display:none}}
+</style></head><body>
+<header><b>Local Agent</b><span id="st">loading…</span>
+<label style="font-size:12px"><input type="checkbox" id="aw"> auto-approve file edits only (commands, git, web and MCP tools always ask)</label>
+<label style="font-size:12px">project <input id="cwd" size="28" placeholder="~/Projects/my-app"></label></header>
+<aside><h4>History</h4><div id="hist"></div></aside>
+<main><div id="log"></div><div id="task"></div>
+<form id="f"><textarea id="q" placeholder="Ask the agent to do something…"></textarea><button id="go">Send</button><button type="button" id="stop" class="s" disabled>Stop</button></form></main>
+<aside class="r"><h4>Tool activity</h4><div id="act"></div></aside>
+<script>
+const T='__TOKEN__',api=(u,o={})=>fetch(u,{...o,headers:{...o.headers,'X-Agent-Token':T}});
+const $=id=>document.getElementById(id);let cid=null,busy=false;
+const el=(cls,txt,p=$('log'))=>{const d=document.createElement('div');d.className=cls;d.textContent=txt;p.appendChild(d);p.scrollTop=p.scrollHeight;return d};
+async function status(){try{const s=await(await api('/model')).json();
+$('st').textContent=`${s.model} ${s.quantization||''} · ctx ${s.context} · ${s.acceleration||'not loaded'} · RAM ${s.model_ram_gb||'-'} GB · NPU: ${s.npu.split(';')[0]}`}catch{$('st').textContent='API unreachable'}}
+async function hist(){const l=await(await api('/conversations')).json();$('hist').innerHTML='';
+l.forEach(c=>{const d=el('conv',c.title||c.id,$('hist'));d.onclick=()=>load(c.id)})}
+async function load(id){if(busy)return;const c=await(await api('/conversations/'+id)).json();cid=id;$('log').innerHTML='';$('act').innerHTML='';
+c.messages.forEach(m=>{if(m.role==='user')el('m u','› '+m.content);else if(m.role==='assistant'&&m.content)el('m',m.content)})}
+async function send(e){e.preventDefault();const q=$('q').value.trim();if(!q||busy)return;$('q').value='';
+busy=true;$('go').disabled=true;$('stop').disabled=false;el('m u','› '+q);let cur=null;$('task').textContent='Task: '+q.slice(0,100);
+try{const r=await api('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({task:q,conversation_id:cid,cwd:$('cwd').value||null,allow_write:$('aw').checked})});
+if(!r.ok){el('m',(await r.json()).detail||'error');return}
+const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+while(true){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+let i;while((i=buf.indexOf('\n\n'))>=0){let ev;try{ev=JSON.parse(buf.slice(buf.indexOf('data: ')+6,i))}catch{buf=buf.slice(i+2);continue}buf=buf.slice(i+2);
+if(ev.type==='text'){if(!cur)cur=el('m','');cur.textContent+=ev.delta;$('log').scrollTop=1e9}
+else if(ev.type==='tool'){cur=null;$('task').textContent=ev.text;el('a t',ev.text,$('act'))}
+else if(ev.type==='result'){const d=el('a '+(ev.ok?'ok':'er'),(ev.ok?'✓ ':'✗ ')+ev.name+` (${ev.seconds}s)`,$('act'));const sm=document.createElement('small');sm.textContent=ev.text;d.appendChild(sm)}
+else if(ev.type==='activity')el('a',ev.text,$('act'))
+else if(ev.type==='confirm')confirmBox(ev)
+else if(ev.type==='done'){cid=ev.conversation_id;if(!cur&&ev.content)el('m',ev.content)}
+else if(ev.type==='error')el('m','Error: '+ev.error)}}
+}catch(x){el('m','Error: '+x)}finally{busy=false;$('go').disabled=false;$('stop').disabled=true;$('task').textContent='';hist();status()}}
+function confirmBox(ev){const b=el('cf'+(ev.level==='dangerous'?' d':''),'');b.append(`${ev.level.toUpperCase()}: ${ev.text}\n`);
+[['Allow',true],['Deny',false]].forEach(([t,v])=>{const x=document.createElement('button');x.textContent=t;x.type='button';
+x.onclick=async()=>{const r=await api('/agent/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:ev.id,approve:v})});b.textContent=(r.ok?(v?'Allowed: ':'Denied: '):'Expired (already denied): ')+ev.text};b.append(x)})}
+$('f').onsubmit=send;$('stop').onclick=()=>api('/agent/stop',{method:'POST'});
+$('q').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey)send(e)};status();hist();
+</script></body></html>
