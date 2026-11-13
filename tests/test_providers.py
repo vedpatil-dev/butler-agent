@@ -424,7 +424,7 @@ def test_every_provider_has_a_model_source(monkeypatch):
     monkeypatch.setattr(main, "_list_codex_models", lambda: [("x1", "")])
     monkeypatch.setattr("agent.providers.ClaudeRunner.healthy", lambda self: True)
     for p in main.PROVIDER_NAMES:
-        if p != "npu":                                  # npu has no model list until flm exists
+        if p not in ("npu", "openai"):                  # local NPU/OpenAI-compat endpoints have no list until a server is up
             assert main._fetch_models(p), f"{p} has no model source wired into _fetch_models"
 
 
@@ -442,6 +442,35 @@ def test_npu_status_renders_in_show_status(capsys):
     show_status(NPUProvider(url="http://127.0.0.1:1").status())  # unreachable: must still render, not KeyError
     out = capsys.readouterr().out
     assert "FastFlowLM" in out and "127.0.0.1:1" in out
+
+
+def test_external_runners_interactive_cmd():
+    from agent.providers import AgyRunner, ClaudeRunner, CodexRunner
+    assert AgyRunner(model="m1", session="s1", approval="readonly").interactive_cmd() == [
+        "agy", "--model", "m1", "--sandbox", "--conversation", "s1"
+    ]
+    assert ClaudeRunner(model="sonnet", effort="high", session="c1", approval="auto-edit").interactive_cmd() == [
+        "claude", "--model", "sonnet", "--effort", "high", "--permission-mode", "acceptEdits", "--resume", "c1"
+    ]
+    assert CodexRunner(model="gpt-5", session="t1", approval="ask").interactive_cmd() == [
+        "codex", "resume", "t1", "-m", "gpt-5", "-s", "workspace-write"
+    ]
+    assert CodexRunner(model="gpt-5").interactive_cmd() == ["codex", "-m", "gpt-5"]
+
+
+def test_make_agent_npu_background_does_not_block(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from agent import main, providers
+    bg_called = []
+    monkeypatch.setattr(providers.NPUProvider, "healthy", lambda self: False)
+    monkeypatch.setattr(providers, "can_start_npu", lambda: True)
+    monkeypatch.setattr(providers, "start_npu_background", lambda *a, **k: bg_called.append(True))
+    monkeypatch.setattr(providers, "ensure_npu_server", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not block")))
+    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
+    args = SimpleNamespace(provider="npu", model=None, num_gpu=None, mcp=None, project=str(tmp_path), plan=False, approval="ask")
+    ag = main._make_agent(args, quiet=True, wait_npu=False)
+    assert bg_called == [True]
+    assert isinstance(ag.llm, providers.NPUProvider)
 
 
 def test_web_search_parses_results(monkeypatch):

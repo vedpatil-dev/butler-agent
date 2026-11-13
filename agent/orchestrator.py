@@ -87,7 +87,7 @@ class Agent:
         else:
             self.schemas = [e["schema"] for e in tools.REGISTRY.values()] + [RECALL_SCHEMA, PLAN_SCHEMA, EXPLORE_SCHEMA] + (mcp.schemas if mcp else [])
             system, persist = SYSTEM.format(cwd=cwd(), date=date.today()) + project_instructions(cwd()), True
-        prov = "npu" if type(self.llm).__name__ == "NPUProvider" else "ollama"
+        prov = getattr(self.llm, "provider_name", "npu" if type(self.llm).__name__ == "NPUProvider" else "ollama")
         self.memory = memory or Memory(system, self.llm.num_ctx, est_tokens(self.schemas), persist=persist, provider=prov)
         self.memory.provider = prov
         self.memory.model = getattr(self.llm, "model", "")
@@ -176,7 +176,7 @@ class Agent:
                 final = f"Stopped after {self.max_steps} steps without finishing."
         finally:
             self.memory.model = getattr(self.llm, "model", "")
-            self.memory.provider = "npu" if type(self.llm).__name__ == "NPUProvider" else "ollama"
+            self.memory.provider = getattr(self.llm, "provider_name", "npu" if type(self.llm).__name__ == "NPUProvider" else "ollama")
             self.memory.save()  # also when the model server fails mid-run: the conversation so far survives
         yield {"type": "done", "content": final}
 

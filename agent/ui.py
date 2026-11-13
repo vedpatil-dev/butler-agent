@@ -6,6 +6,7 @@ distinguish Shift+Enter from Enter without extended keyboard protocol support, s
 converge on Alt+Enter (or similar) for a literal newline - same choice made here.
 """
 import re
+import threading
 from pathlib import Path
 
 from prompt_toolkit import Application
@@ -60,10 +61,11 @@ def history_file_for(history_path: Path, provider: str | None) -> Path:
     return history_path.with_name(f"{history_path.name}_{provider}") if provider else history_path
 
 
-def make_box_prompt(get_title, complete_fn, get_provider, history_path: Path):
+def make_box_prompt(get_title, complete_fn, get_provider, history_path: Path, get_status=None):
     """Returns prompt() -> str | None (None on Ctrl-D with an empty box, meaning "quit"). Each
     call draws a fresh box (not a persistent full-screen app), so it composes with the existing
-    plain print()-based _render() - the box disappears once Enter submits, same as a normal prompt."""
+    plain print()-based _render() - the box disappears once Enter submits, same as a normal prompt.
+    If `get_status` is given, a live 2-line telemetry bar below the box refreshes every ~1.5s."""
     histories: dict[Path, FileHistory] = {}
 
     def _history() -> FileHistory:
@@ -131,18 +133,51 @@ def make_box_prompt(get_title, complete_fn, get_provider, history_path: Path):
         hist = _history()
         area = TextArea(multiline=True, wrap_lines=True, completer=completer,
                         complete_while_typing=False, history=hist, height=input_height)
+
+        prev_txt = [""]
+
+        def _auto_complete(_):
+            txt = area.buffer.document.text_before_cursor
+            was = prev_txt[0]
+            prev_txt[0] = txt
+            # Only auto-open on single-char typing forward; skip completion-accept, history Up/Down, and paste
+            if area.buffer.complete_state is not None or len(txt) != len(was) + 1 or not txt.startswith(was):
+                return
+            word = txt.rsplit(None, 1)[-1] if txt.split() and not txt[-1].isspace() else ""
+            if (txt.startswith("/") and " " not in txt) or word.startswith("@"):
+                area.buffer.start_completion(select_first=False)
+
+        area.buffer.on_text_changed += _auto_complete
         # Without this Float, Tab still cycles/applies candidates (the keybindings above work),
         # but silently - there's nothing on screen showing what the choices are or which one is
         # selected, which is exactly the bug this fixes: candidates were being applied one at a
         # time with each Tab press and no visible list to choose from.
-        root = FloatContainer(content=Frame(area, title=get_title()),
+        status_state = {"text": get_status() if get_status else ""}
+        body = Frame(area, title=get_title())
+        if get_status:
+            status_win = Window(FormattedTextControl(lambda: [("fg:ansibrightblack", status_state["text"])]),
+                                height=lambda: Dimension.exact(max(1, len(status_state["text"].splitlines()))))
+            body = HSplit([body, status_win])
+        root = FloatContainer(content=body,
                               floats=[Float(xcursor=True, ycursor=True, content=CompletionsMenu(max_height=8))])
         app = Application(layout=Layout(root, focused_element=area),
                           key_bindings=kb, full_screen=False, mouse_support=False)
+        stop = threading.Event()
+        if get_status:
+            def _refresh():
+                while not stop.wait(1.5):
+                    try:
+                        status_state["text"] = get_status()
+                        app.invalidate()
+                    except Exception:
+                        pass
+            threading.Thread(target=_refresh, daemon=True).start()
         try:
             result = app.run()
         except (KeyboardInterrupt, EOFError):
             return None
+        finally:
+            stop.set()
         if result:
             hist.append_string(result)
         return result
@@ -261,12 +296,15 @@ def pick_from_list(rows: list[tuple[str, str, str]], title: str, current: int | 
 # ---------------------------------------------------------------------------------------------
 # Streaming markdown -> ANSI
 # ---------------------------------------------------------------------------------------------
-_B, _C = re.compile(r"\*\*(.+?)\*\*"), re.compile(r"`([^`\n]+?)`")
+_B = re.compile(r"\*\*(.+?)\*\*")
+_I = re.compile(r"(?<!\*)\*(?!\s|\.)([^*\n]+?)(?<!\s)\*(?!\*)")
+_C = re.compile(r"`([^`\n]+?)`")
+_H = re.compile(r"^(#{1,3})\s+(.+)$")
 
 
 class MdStream:
-    """Renders streamed model text one complete line at a time, so **bold** / `code` split across chunks still
-    render, and ``` fenced blocks are shown dim-cyan. feed() returns what to print now; flush() the unfinished tail."""
+    """Renders streamed model text one complete line at a time, so **bold** / *italic* / `code` split across
+    chunks still render, headings/lists/quotes/rules are styled, and ``` fenced blocks are framed in cyan."""
 
     def __init__(self):
         self.buf, self.fence = "", False
@@ -280,9 +318,30 @@ class MdStream:
         out, self.buf = self._line(self.buf) if self.buf else "", ""
         return out
 
+    def _inline(self, line: str) -> str:
+        # Protect inline `code` spans first so * or ** inside backticks are never formatted
+        parts = _C.split(line)
+        for idx in range(0, len(parts), 2):
+            parts[idx] = _I.sub("\033[3m\\1\033[0m", _B.sub("\033[1m\\1\033[0m", parts[idx]))
+        for idx in range(1, len(parts), 2):
+            parts[idx] = f"\033[36m{parts[idx]}\033[0m"
+        return "".join(parts)
+
     def _line(self, line: str) -> str:
-        if line.lstrip().startswith("```"):
+        s = line.lstrip()
+        if s.startswith("```"):
             self.fence = not self.fence
-            return f"\033[2m{line}\033[0m"
-        if self.fence: return f"\033[36m{line}\033[0m"
-        return _C.sub("\033[36m\\1\033[0m", _B.sub("\033[1m\\1\033[0m", line))
+            lang = s[3:].strip()
+            return f"\033[2m┌─ {lang or 'code'}\033[0m" if self.fence else "\033[2m└─\033[0m"
+        if self.fence:
+            return f"\033[2m│\033[0m \033[36m{line}\033[0m"
+        if m := _H.match(s):
+            return f"\033[1;36m{m.group(2)}\033[0m"
+        if s in ("---", "***", "___"):
+            return "\033[2m" + "─" * 40 + "\033[0m"
+        if s.startswith("> "):
+            return f"\033[2m│ {self._inline(s[2:])}\033[0m"
+        if s.startswith(("- ", "* ")) and not s.startswith("--"):
+            indent = line[:len(line) - len(s)]
+            return f"{indent}\033[36m•\033[0m {self._inline(s[2:])}"
+        return self._inline(line)

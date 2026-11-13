@@ -49,16 +49,17 @@ def cmd_status(_):
 
 
 def cmd_providers(_):
-    from .detect import detect_agents, detect_npu
-    from .providers import EXTERNAL_AGENTS, NPU_URL
+    from .detect import detect_agents, detect_gpu, detect_npu
+    from .providers import EXTERNAL_AGENTS, NPU_URL, OPENAI_URL
     from .llm import LLM
     print(f"{BOLD}Local LLM providers{RESET}")
     print(f"  ollama       {'up' if LLM().healthy() else RED + 'down' + RESET}   @ {config.LLM_URL}")
     import httpx
-    npu_up = False
-    try: npu_up = httpx.get(f"{NPU_URL}/v1/models", timeout=2).status_code == 200
-    except httpx.HTTPError: pass
-    print(f"  npu          {'up' if npu_up else DIM + 'down' + RESET}   @ {NPU_URL}  (FastFlowLM)")
+    for label, url, note in (("npu", NPU_URL, "FastFlowLM"), ("openai", OPENAI_URL, "OpenVINO/MLX/Genie/llama.cpp")):
+        up = False
+        try: up = httpx.get(f"{url}/v1/models", timeout=2).status_code == 200
+        except httpx.HTTPError: pass
+        print(f"  {label:<12} {'up' if up else DIM + 'down' + RESET}   @ {url}  ({note})")
     for name, cls in EXTERNAL_AGENTS.items():
         up = cls().healthy()
         print(f"  {name:<12} {'available' if up else DIM + 'not installed' + RESET}   (cloud, via `{CLI_NAMES[name]}` CLI - not local)")
@@ -69,11 +70,22 @@ def cmd_providers(_):
     for n in npu["present"]:
         tag = "" if n["verified_on_this_machine"] else DIM + " (untested detection logic)" + RESET
         print(f"  {n['vendor']} {n['family']}{tag}")
+    print(f"\n{BOLD}GPU hardware{RESET}")
+    gpu = detect_gpu()
+    if not gpu["present"]: print("  none detected")
+    for g in gpu["present"]:
+        state = "ready" if g.get("driver_ready") else "driver missing"
+        print(f"  {g['vendor']} {g['family']} [{g['backend']}, {state}]")
     print(f"\n{BOLD}AI agent CLIs found on PATH{RESET}")
     for ag in detect_agents():
         prov = AGENT_TO_PROVIDER.get(ag["name"])
         status = f"{GREEN}provider: {prov}{RESET}" if prov else f"{DIM}detected only - no runner for it yet{RESET}"
         print(f"  {ag['name']:<16}{ag['version']:<30}{status}")
+
+
+def cmd_setup(a):
+    from .setup import run_setup
+    raise SystemExit(run_setup(install=a.install, yes=a.yes, target=a.target, as_json=a.json))
 
 
 def _pid():
@@ -109,17 +121,15 @@ def cmd_stop(a):
         print("model unloaded (RAM freed)")
 
 
-def _pick_provider() -> str | None:
+def _pick_provider(wait_npu: bool = True) -> str | None:
     """Auto-selects the first reachable provider, in priority order (npu local > ollama local >
     antigravity > claude), when no --provider was given - no menu, no prompt. Only falls back to
     the interactive menu if NOTHING is reachable, so there's still a way to see what's available
     and what to start, rather than a bare failure. Returns None if the user gives up there."""
     from .detect import detect_npu
-    from .providers import EXTERNAL_AGENTS, NPU_URL
+    from .providers import EXTERNAL_AGENTS, _npu_up, can_start_npu, ensure_npu_server
     from .llm import LLM
-    import httpx
-    from .providers import ensure_npu_server
-    npu_up = ensure_npu_server()
+    npu_up = ensure_npu_server() if wait_npu else (_npu_up() or can_start_npu())
     options = [("npu", npu_up, "local, FastFlowLM on the NPU"), ("ollama", LLM().healthy(), f"local, @ {config.LLM_URL}")]
     for name, cls in EXTERNAL_AGENTS.items():
         options.append((name, cls().healthy(), f"cloud via `{CLI_NAMES[name]}` CLI, not local"))
@@ -159,12 +169,17 @@ def _init_project(a) -> None:
     set_cwd(a.project)
 
 
-def _make_agent(a, quiet: bool = False):
+def _make_agent(a, quiet: bool = False, wait_npu: bool = True):
     from .mcp_client import MCPHub, load_config
     from .orchestrator import Agent
-    from .providers import ensure_npu_server, make_provider
+    from .providers import can_start_npu, ensure_npu_server, make_provider, start_npu_background
     llm = make_provider(a.provider, model=a.model, **({"num_gpu": a.num_gpu} if a.provider == "ollama" else {}))
-    if not (llm.healthy() or (a.provider == "npu" and ensure_npu_server())): sys.exit(f"{a.provider} provider not reachable (see `agent providers`)")
+    if not llm.healthy():
+        if a.provider == "npu" and not wait_npu and can_start_npu():
+            start_npu_background()
+            if not quiet: print(f"{DIM}loading NPU model ({llm.model}) in background...{RESET}")
+        elif not (a.provider == "npu" and ensure_npu_server()):
+            sys.exit(f"{a.provider} provider not reachable (see `agent providers`)")
     hub = MCPHub(load_config(), only=a.mcp) if a.mcp else None
     if not quiet: show_status(llm.status())
     return Agent(llm, cli_confirm({"all": False}), project=a.project, mcp=hub, plan=a.plan, mode=a.approval)
@@ -231,6 +246,7 @@ COMMANDS = {
     "/undo": "revert the file edits of the last agent run (local agent only)",
     "/new": "start a fresh conversation (forget earlier context)",
     "/resume [provider|all]": "pick an earlier conversation for this provider (or all/<provider>) and continue it (alias /history)",
+    "/native": "open the active cloud CLI (agy/claude/codex) interactively so all native /commands work",
     "/exit": "quit",
 }
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")  # same set for `claude --effort` and `agy --effort`
@@ -310,7 +326,7 @@ def _apply_local_conversation(a, agent, cid: str):
     try: raw = Memory.load_raw(cid)
     except (OSError, ValueError):
         print(f"{RED}couldn't read that conversation{RESET}"); return agent
-    prov = raw.get("provider") or ("npu" if a.provider == "npu" else "ollama")
+    prov = raw.get("provider") or a.provider
     if agent is None or (raw.get("provider") and raw["provider"] != a.provider):
         agent, ok = _switch_provider(a, prov, agent)
         if not ok: return agent
@@ -355,6 +371,7 @@ def _switch_provider(a, name: str, agent):
     """Switch the chat to provider `name` -> (agent, switched). A local provider must be reachable
     first: _make_agent() sys.exit()s on a dead one, which used to kill butler mid-chat on /provider ollama.
     Carries over active conversation turns so switching providers mid-chat doesn't lose context."""
+    _join_ram()
     from .providers import EXTERNAL_AGENTS, ensure_npu_server, make_provider
     if name in EXTERNAL_AGENTS:
         if not EXTERNAL_AGENTS[name]().healthy():
@@ -403,14 +420,25 @@ def _close_hub(agent) -> None:
     if agent is not None and agent.mcp: agent.mcp.close()  # MCP servers are subprocesses: don't leave them behind
 
 
+_RAM_LOCK = threading.Lock()
+_RAM_THREAD: threading.Thread | None = None
+
+
+def _join_ram() -> None:
+    if _RAM_THREAD and _RAM_THREAD.is_alive() and threading.current_thread() is not _RAM_THREAD:
+        _RAM_THREAD.join(timeout=10)
+
+
 def _free_ram(provider: str, model: str | None) -> None:
     from .providers import free_local_models
-    if _other_chats(): return  # see _other_chats: don't unload models another chat may be using
-    freed = free_local_models(provider, model)
-    if freed: print(f"{DIM}freed RAM: {', '.join(freed)}{RESET}")
+    with _RAM_LOCK:
+        if _other_chats(): return  # see _other_chats: don't unload models another chat may be using
+        freed = free_local_models(provider, model)
+        if freed: print(f"{DIM}freed RAM: {', '.join(freed)}{RESET}")
 
 
 def _apply_model(a, agent, provider: str, model: str):
+    _join_ram()
     if provider != a.provider:
         agent, ok = _switch_provider(a, provider, agent)
         if not ok: return agent
@@ -466,6 +494,7 @@ def _release_on_exit() -> None:
     for hub in list(MCPHub.live): hub.close()
     (CHATS / str(os.getpid())).unlink(missing_ok=True)
     if _pid() or _other_chats(): return  # the API server / another chat shares the models: unloading would break that session
+    _join_ram()
     try: freed = free_local_models("")
     except Exception: return
     if freed: print(f"\n{DIM}freed RAM: {', '.join(freed)}{RESET}")
@@ -473,6 +502,16 @@ def _release_on_exit() -> None:
 
 def _run_turn(agent, task: str):
     """One local-agent turn. In plan mode the turn only investigates; offer to carry the plan out afterwards."""
+    from .providers import NPUProvider, ensure_npu_server, npu_bg_state
+    if isinstance(agent.llm, NPUProvider) and not agent.llm.healthy():
+        bg = npu_bg_state()
+        if bg["state"] == "failed":
+            print(f"{RED}error:{RESET} NPU service failed to start ({bg['error']}); retrying...")
+        else:
+            print(f"{DIM}waiting for NPU model ({agent.llm.model}) to finish loading...{RESET}", flush=True)
+        if not ensure_npu_server():
+            print(f"{RED}error:{RESET} NPU server not reachable (check `systemctl --user status flm-npu.service`)")
+            return
     try:
         _render(agent.run(task))
         if agent.plan and sys.stdin.isatty() and input(f"{BOLD}Execute this plan? [y/N] {RESET}").strip().lower() == "y":
@@ -498,7 +537,7 @@ def cmd_chat(a):
     atexit.register(_release_on_exit)
     for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, lambda *_: sys.exit(0))  # sys.exit -> atexit runs
     if a.provider is None:
-        a.provider = _pick_provider()
+        a.provider = _pick_provider(wait_npu=False)
         if a.provider is None: return  # user gave up at the menu
     from .ui import make_box_prompt
     _drop_unsupported_effort(a)
@@ -507,11 +546,34 @@ def cmd_chat(a):
     a.conv_id = None  # butler's own id for this conversation in history.py (what /resume lists)
     a.carryover = None
     a.bridge_turns = []
+    def _live_status() -> str:
+        from .llm import meminfo, npu_state
+        r = meminfo()
+        ram = f"RAM {r.get('available_gb', '?')}/{r.get('total_gb', '?')} GB free"
+        if agent is None:
+            return f"  {a.provider} (cloud) · {ram} · Enter send · Alt+Enter newline · /native · /help"
+        up = agent.llm.healthy()
+        bg_err = ""
+        if up:
+            state = "up"
+        elif a.provider == "npu":
+            from .providers import npu_bg_state
+            bg = npu_bg_state()
+            state = "FAILED" if bg["state"] == "failed" else "loading..."
+            if bg["state"] == "failed":
+                bg_err = f" ({bg['error']})"
+        else:
+            state = "down"
+        rt = getattr(agent.llm, "runtime_name", "Ollama")
+        npu_txt = npu_state().replace("; not used by Ollama", "")
+        return (f"  Backend: {rt} ({state}{bg_err}) · Context: {agent.llm.num_ctx} tok · {ram}\n"
+                f"  NPU: {npu_txt} · Enter send · Alt+Enter newline · /model · /help")
+
     box_prompt = make_box_prompt(lambda: box_title(a.provider, a.model if agent is None else agent.llm.model, a.effort,
                                                    None if agent is None else agent.memory.context_pct()),
                                  complete_command,
-                                 lambda: a.provider, config.STATE / "chat_history")
-    agent = None if a.provider in EXTERNAL_AGENTS else _make_agent(a)
+                                 lambda: a.provider, config.STATE / "chat_history", get_status=_live_status)
+    agent = None if a.provider in EXTERNAL_AGENTS else _make_agent(a, quiet=True, wait_npu=False)
     # Why: tell the user how to pick the conversation back up. Impact: shown on every exit path (/exit, Ctrl-C/Ctrl-D, SIGHUP)
     # once the chat has a conversation - a recorded cloud turn (conv_id) or a local agent that has taken a user message.
     # Registered after _release_on_exit, so it prints first (atexit is LIFO). `agent` is read late: /provider and /resume rebind it.
@@ -519,7 +581,9 @@ def cmd_chat(a):
         if getattr(a, "conv_id", None) or (agent and any(m.get("role") == "user" for m in agent.memory.messages)):
             print(f"\n{DIM}resume this chat: butler -C {shlex.quote(a.project)} --continue{RESET}")
     atexit.register(_resume_hint)
-    _free_ram(a.provider, agent.llm.model if agent else None)  # e.g. ollama still holding a model from earlier
+    global _RAM_THREAD
+    _RAM_THREAD = threading.Thread(target=_free_ram, args=(a.provider, agent.llm.model if agent else None), daemon=True)
+    _RAM_THREAD.start()
     threading.Thread(target=_model_catalog, daemon=True).start()  # warm the (slow: agy ~5s) model list so /model is instant
     if agent is None:
         native = " /help shows antigravity's own commands;" if a.provider == "antigravity" else ""
@@ -630,7 +694,7 @@ def cmd_chat(a):
                 agent = _make_agent(a, quiet=True)
                 agent.llm.model = model
                 agent.memory.model = model
-            if sys.stdout.isatty(): print("\033[2J\033[H", end="")  # clear the screen only, not the scrollback
+            if sys.stdout.isatty(): print("\033[3J\033[2J\033[H", end="", flush=True)  # clear screen + scrollback buffer
             print(f"{DIM}fresh conversation - earlier context forgotten{RESET}")
             continue
         if cmd == "/effort":
@@ -644,8 +708,21 @@ def cmd_chat(a):
             a.effort = level or _pick_effort(a.effort)
             print(f"{DIM}{a.provider} effort: {a.effort or 'default'}{RESET}")
             continue
+        if cmd == "/native":
+            if a.provider not in EXTERNAL_AGENTS:
+                print(f"{DIM}/native is for cloud CLIs (antigravity, claude, codex); local providers handle commands directly{RESET}")
+                continue
+            runner = EXTERNAL_AGENTS[a.provider](model=a.model, effort=a.effort, session=a.session, approval=a.approval)
+            if not runner.healthy():
+                print(f"{RED}error:{RESET} `{CLI_NAMES[a.provider]}` not found on PATH")
+                continue
+            icmd = runner.interactive_cmd()
+            print(f"{DIM}handing terminal to `{' '.join(icmd)}` (exit it to return to butler)...{RESET}")
+            subprocess.run(icmd, cwd=a.project)
+            continue
         if task.startswith("/") and not dropped:
-            print(f"{DIM}unknown command: {cmd} (type /help for commands){RESET}")
+            hint = f", or /native to run {a.provider} interactively" if a.provider in EXTERNAL_AGENTS else ""
+            print(f"{DIM}unknown command: {cmd} (type /help for commands{hint}){RESET}")
             continue
         if not task: continue
         if agent is None:
@@ -668,7 +745,13 @@ def main():
     s = sub.add_parser("stop", help="stop the API"); s.add_argument("--unload", action="store_true", help="also unload the model")
     s.set_defaults(f=cmd_stop)
     sub.add_parser("status", help="model / backend / context / RAM / acceleration").set_defaults(f=cmd_status)
-    sub.add_parser("providers", help="detected NPU hardware, AI agent CLIs, and provider availability").set_defaults(f=cmd_providers)
+    sub.add_parser("providers", help="detected NPU/GPU hardware, AI agent CLIs, and provider availability").set_defaults(f=cmd_providers)
+    s = sub.add_parser("setup", help="detect GPUs/NPUs and install required drivers and runtimes")
+    s.add_argument("--install", action="store_true", help="execute driver/runtime install commands")
+    s.add_argument("--yes", "-y", action="store_true", help="skip confirmation prompts during --install")
+    s.add_argument("--target", help="limit setup to one accelerator id (e.g. nvidia-cuda, amd-gpu, intel-npu, apple-silicon)")
+    s.add_argument("--json", action="store_true", help="print detected hardware and setup plan as JSON")
+    s.set_defaults(f=cmd_setup)
     for name, f in (("chat", cmd_chat), ("run", cmd_run)):
         s = sub.add_parser(name, help="interactive session" if name == "chat" else "run one task and exit")
         if name == "run": s.add_argument("task"); s.add_argument("--json", action="store_true", help="print one JSON event per line (for scripts); exit 0 ok, 1 error, 2 action denied")

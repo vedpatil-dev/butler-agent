@@ -19,21 +19,42 @@ def inv(code: str) -> str:
     return f"\001{code}\002" if "readline" in sys.modules else code
 
 
+def _diff_lines(old: list[str], new: list[str], path: str) -> list[str]:
+    import difflib
+    diff = list(difflib.unified_diff(old, new, path, path, lineterm="", n=2))[2:]
+    out = [(GREEN if l[0] == "+" else RED if l[0] == "-" else DIM) + l + RESET if l[:1] in "+-@" else DIM + l + RESET
+           for l in diff[:60]]
+    if len(diff) > 60:
+        out.append(f"{DIM}... (+{len(diff) - 60} more lines){RESET}")
+    return out
+
+
 def _preview(name: str, args: dict) -> str:
     """What the user is approving: the command, or a diff of the file change (not 160 chars of JSON)."""
-    import difflib
     from tools.filesystem import safe_path
     try:
         if name == "edit_file":
-            old = safe_path(args["path"]).read_text().splitlines()
-            new = safe_path(args["path"]).read_text().replace(args["old"], args["new"], 1).splitlines()
-        elif name == "create_file": old, new = [], str(args["content"]).splitlines()
-        else: return ""
-    except (OSError, KeyError, ValueError): return ""
-    out = []
-    for l in list(difflib.unified_diff(old, new, args["path"], args["path"], lineterm="", n=2))[2:60]:
-        out.append((GREEN if l[0] == "+" else RED if l[0] == "-" else DIM) + l + RESET if l[:1] in "+-@" else DIM + l + RESET)
-    return "\n".join(out)
+            old_txt = safe_path(args["path"]).read_text()
+            return "\n".join(_diff_lines(old_txt.splitlines(), old_txt.replace(args["old"], args["new"], 1).splitlines(), args["path"]))
+        if name == "create_file":
+            return "\n".join(_diff_lines([], str(args["content"]).splitlines(), args["path"]))
+        if name == "multi_edit":
+            out, virtual = [], {}
+            for ed in args.get("edits") or []:
+                try:
+                    p = ed["path"]
+                    old_txt = virtual[p] if p in virtual else safe_path(p).read_text()
+                    new_txt = old_txt.replace(ed["old"], ed["new"], 1)
+                    virtual[p] = new_txt
+                    out.extend(_diff_lines(old_txt.splitlines(), new_txt.splitlines(), p))
+                except (OSError, KeyError, ValueError, TypeError) as e:
+                    out.append(f"{RED}[preview error for {ed.get('path', '?')}: {e}]{RESET}")
+            if len(out) > 80:
+                return "\n".join(out[:80] + [f"{DIM}... (+{len(out) - 80} more lines){RESET}"])
+            return "\n".join(out)
+    except (OSError, KeyError, ValueError, TypeError):
+        return ""
+    return ""
 
 
 def cli_confirm(state):

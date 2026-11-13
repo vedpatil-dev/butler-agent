@@ -53,8 +53,15 @@ def _render(events):
             if t == "text": streamed = True; e["delta"] = _CTRL.sub("", e["delta"]); parts.append(e["delta"]); print(md.feed(e["delta"]), end="", flush=True)
             elif t == "tool": tools_used += 1; print(md.flush() + f"\n{DIM}→ {e['text']}{RESET}", flush=True)
             elif t == "result":
-                body = e["text"] if e.get("name") == "update_plan" and e["ok"] else (e["text"][:160].splitlines() or [""])[0]  # the checklist is shown whole
-                print(f"{DIM}  {'✓' if e['ok'] else '✗'} {body.replace(chr(10), chr(10) + '    ')} ({e['seconds']}s){RESET}"); spin_on()  # next: the model reads the result
+                if e.get("name") == "update_plan" and e["ok"]:
+                    body = e["text"]
+                else:
+                    lines = e["text"].splitlines() or [""]
+                    preview = "\n    ".join(l[:160] for l in lines[:3])
+                    extra = f"\n    (+{len(lines) - 3} more lines)" if len(lines) > 3 else ""
+                    body = preview + extra
+                mark = f"{GREEN}✓{RESET}" if e["ok"] else f"{RED}✗{RESET}"
+                print(f"  {mark} {DIM}{body} ({e['seconds']}s){RESET}"); spin_on()  # next: the model reads the result
             elif t == "permission":  # claude asks via permissions.PermissionBroker; the child waits for the answer
                 from .confirm import permission_prompt
                 permission_prompt(e); spin_on()

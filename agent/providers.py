@@ -37,19 +37,40 @@ class Provider(Protocol):
 NPU_MODEL = os.environ.get("AGENT_NPU_MODEL", "qwen3.5:2b")  # what `flm serve` has loaded (see flm-npu.service)
 NPU_CTX = int(os.environ.get("AGENT_NPU_CTX", "65536"))  # must match `flm serve --ctx-len` in flm-npu.service (RSS: 32k 3.9 GB, 64k 4.1, 128k 4.8 for qwen3.5:2b)
 NPU_MAX_TOKENS = int(os.environ.get("AGENT_NPU_MAX_TOKENS", "8192"))  # a 4B model can loop for minutes; 4096 tokens took 400s here
-NPU_URL = "http://127.0.0.1:52625"  # flm serve's default port (FastFlowLM, OpenAI-compatible)
+NPU_URL = os.environ.get("AGENT_NPU_URL", "http://127.0.0.1:52625")  # flm serve's default port (FastFlowLM, OpenAI-compatible)
+OPENAI_URL = os.environ.get("AGENT_OPENAI_URL", "http://127.0.0.1:8080")  # generic local OpenAI-compat (OpenVINO, Genie/QNN, MLX, llama.cpp, vLLM)
+OPENAI_MODEL = os.environ.get("AGENT_OPENAI_MODEL", "")
+OPENAI_CTX = int(os.environ.get("AGENT_OPENAI_CTX", str(config.NUM_CTX)))
 
 
-class NPUProvider:
-    """FastFlowLM (`flm serve`) on the XDNA2 NPU. Verified 2026-10-15 on this machine with qwen3.5:4b: streaming and
-    non-streaming chat work and xrt-smi shows NPU submissions rising. Tool calling is not verified."""
+class OpenAICompatProvider:
+    """Generic local OpenAI-compatible provider (/v1/chat/completions + /v1/models).
+    Supports OpenVINO (Intel NPU), Qualcomm Genie/QNN (Snapdragon NPU), MLX (Apple Silicon),
+    llama.cpp / vLLM (NVIDIA CUDA, AMD ROCm/Vulkan), and FastFlowLM (via NPUProvider)."""
 
-    vision = False  # image input through flm is unverified; attach.local says so instead of sending it
+    vision = False
+    provider_name = "openai"
+    runtime_name = "OpenAI-compatible (local)"
 
-    def __init__(self, model=None, num_ctx=None, think=None, url=None):
-        self.model, self.num_ctx = model or NPU_MODEL, num_ctx or NPU_CTX
-        self.think = None  # FastFlowLM's thinking-control flag, if any, is unverified
-        self.http = httpx.Client(base_url=url or NPU_URL, timeout=httpx.Timeout(600, connect=5))
+    def __init__(self, model=None, num_ctx=None, think=None, url=None, runtime_name=None):
+        self.model, self.num_ctx = model if model is not None else OPENAI_MODEL, num_ctx or OPENAI_CTX
+        self.think = None
+        if runtime_name: self.runtime_name = runtime_name
+        self.http = httpx.Client(base_url=url or OPENAI_URL, timeout=httpx.Timeout(600, connect=5))
+
+    def _resolve_model(self) -> str:
+        if self.model:
+            return self.model
+        try:
+            r = self.http.get("/v1/models", timeout=3)
+            if r.status_code == 200:
+                ids = [m["id"] for m in r.json().get("data", []) if m.get("id")]
+                if ids:
+                    self.model = ids[0]
+                    return self.model
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            pass
+        raise LLMError(f"no model configured for {self.runtime_name} (set AGENT_OPENAI_MODEL or use /model)")
 
     def healthy(self) -> bool:
         try: return self.http.get("/v1/models", timeout=3).status_code == 200
@@ -80,7 +101,7 @@ class NPUProvider:
         return out
 
     def _body(self, messages, stream, tools=None, **opts):
-        body = {"model": self.model, "messages": self._openai_messages(messages), "stream": stream}
+        body = {"model": self._resolve_model(), "messages": self._openai_messages(messages), "stream": stream}
         if tools: body["tools"] = tools
         body["max_tokens"] = opts.get("num_predict", NPU_MAX_TOKENS)
         return body
@@ -142,9 +163,27 @@ class NPUProvider:
             {"function": tc["function"]} for tc in m.get("tool_calls") or []], "stats": {}}
 
     def status(self) -> dict:
+        from .llm import meminfo
+        up = self.healthy()
+        return {"model": self.model, "context": self.num_ctx, "runtime": self.runtime_name, "url": str(self.http.base_url).rstrip("/"),
+                "ollama_up": up, "ram": meminfo(), "npu": "OpenAI-compatible endpoint",
+                "acceleration": f"{self.runtime_name} ({'up' if up else 'server down'})"}
+
+
+class NPUProvider(OpenAICompatProvider):
+    """FastFlowLM (`flm serve`) on the XDNA2 NPU. Verified 2026-10-15 on this machine with qwen3.5:4b: streaming and
+    non-streaming chat work and xrt-smi shows NPU submissions rising. Tool calling is not verified."""
+
+    provider_name = "npu"
+    runtime_name = "FastFlowLM (NPU)"
+
+    def __init__(self, model=None, num_ctx=None, think=None, url=None):
+        super().__init__(model=model or NPU_MODEL, num_ctx=num_ctx or NPU_CTX, think=think, url=url or NPU_URL)
+
+    def status(self) -> dict:
         from .llm import meminfo, npu_state
         up = self.healthy()
-        return {"model": self.model, "context": self.num_ctx, "runtime": "FastFlowLM (NPU)", "url": str(self.http.base_url).rstrip("/"),
+        return {"model": self.model, "context": self.num_ctx, "runtime": self.runtime_name, "url": str(self.http.base_url).rstrip("/"),
                 "ollama_up": up, "ram": meminfo(), "npu": npu_state().replace("; not used by Ollama", ""),
                 "acceleration": "NPU via FastFlowLM (server up; confirm with xrt-smi submissions)" if up else "server down"}
 
@@ -167,18 +206,50 @@ def _npu_up() -> bool:
     finally: p.http.close()
 
 
+def can_start_npu() -> bool:
+    """True if the flm-npu user service exists and the NPU device is present."""
+    unit = Path.home() / ".config/systemd/user" / NPU_UNIT
+    return _services_enabled() and unit.exists() and Path("/dev/accel/accel0").exists()
+
+
 def ensure_npu_server(wait: float = 45) -> bool:
     """True if the NPU server answers. If it doesn't but the flm-npu user unit exists, start it (the NPU is
     the default provider, so it should come up on its own) and wait for it."""
     if _npu_up(): return True
-    unit = Path.home() / ".config/systemd/user" / NPU_UNIT
-    if not (_services_enabled() and unit.exists() and Path("/dev/accel/accel0").exists()): return False
+    if not can_start_npu(): return False
     if not _systemctl("start", NPU_UNIT): return False
     end = time.time() + wait
     while time.time() < end:
         if _npu_up(): return True
         time.sleep(1)
     return False
+
+
+_NPU_BG = {"state": "idle", "error": ""}
+
+
+def npu_bg_state() -> dict:
+    """Current background NPU startup state: idle | loading | ready | failed."""
+    return dict(_NPU_BG)
+
+
+def start_npu_background(wait: float = 45) -> threading.Thread | None:
+    """Start the NPU server on a daemon thread so the interactive UI opens immediately."""
+    if _npu_up():
+        _NPU_BG.update(state="ready", error="")
+        return None
+    if not can_start_npu():
+        return None
+    _NPU_BG.update(state="loading", error="")
+
+    def _run():
+        ok = ensure_npu_server(wait=wait)
+        _NPU_BG.update(state="ready" if ok else "failed",
+                       error="" if ok else f"{NPU_UNIT} did not respond within {wait}s")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t
 
 
 def free_local_models(provider: str, model: str | None = None) -> list[str]:
@@ -285,6 +356,7 @@ class ExternalAgent(Protocol):
     def __init__(self, model: str | None = None, session: str | None = None, approval: str | None = None,
                  effort: str | None = None, prompt: bool = False): ...
     def healthy(self) -> bool: ...
+    def interactive_cmd(self) -> list[str]: ...
     def run(self, task: str, files=()): ...
 
 
@@ -318,6 +390,14 @@ class AgyRunner:
         # every butler message is a separate `agy -p` process with no memory of the last one, so
         # without this a follow-up answer ("tea") reaches an agent that never asked anything
         # (verified: "unknown" without --conversation, "42" with it)
+        if self.session: cmd += ["--conversation", self.session]
+        return cmd
+
+    def interactive_cmd(self) -> list[str]:
+        """Interactive TUI command (no -p) so native slash commands and pickers work."""
+        cmd = ["agy"]
+        if self.model: cmd += ["--model", self.model]
+        cmd += approval_flags("antigravity", self.approval)
         if self.session: cmd += ["--conversation", self.session]
         return cmd
 
@@ -365,6 +445,15 @@ class ClaudeRunner:
             cmd += ["--mcp-config", broker.mcp_config(sys.executable, script), "--permission-prompt-tool", permissions.TOOL]
         return cmd
 
+    def interactive_cmd(self) -> list[str]:
+        """Interactive TUI command (no -p) so native slash commands and pickers work."""
+        cmd = ["claude"]
+        if self.model: cmd += ["--model", self.model]
+        if self.effort: cmd += ["--effort", self.effort]
+        cmd += approval_flags("claude", self.approval)
+        if self.session: cmd += ["--resume", self.session]
+        return cmd
+
     def run(self, task: str, files=()):
         if not (self.prompt and self.approval in ("ask", "auto-edit")):  # readonly (plan) never needs to ask
             yield from _run_external_agent(self.cmd(task, files=files), parse_claude_line)
@@ -402,6 +491,12 @@ class CodexRunner:
         if self.session: return ["codex", "exec", "resume", self.session, task] + flags + imgs
         if imgs: return ["codex", "exec", task] + flags + imgs
         return ["codex", "exec"] + flags + [task]
+
+    def interactive_cmd(self) -> list[str]:
+        """Interactive TUI command (no exec) so native slash commands and pickers work."""
+        flags = (["-m", self.model] if self.model else []) + approval_flags("codex", self.approval)
+        if self.session: return ["codex", "resume", self.session] + flags
+        return ["codex"] + flags
 
     def run(self, task: str, files=()):
         yield from _run_external_agent(self.cmd(task, files), parse_codex_line)
@@ -524,5 +619,7 @@ def make_provider(name: str, **kw):
         return LLM(**kw)
     if name == "npu":
         return NPUProvider(**kw)
-    raise ValueError(f"unknown provider: {name!r} (ollama|npu; "
+    if name == "openai":
+        return OpenAICompatProvider(**kw)
+    raise ValueError(f"unknown provider: {name!r} (ollama|npu|openai; "
                      f"{'/'.join(EXTERNAL_AGENTS)} are run separately, see EXTERNAL_AGENTS)")

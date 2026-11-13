@@ -6,7 +6,7 @@ import threading
 
 from . import config
 
-PROVIDER_NAMES = ("ollama", "npu", "antigravity", "claude", "codex")
+PROVIDER_NAMES = ("ollama", "npu", "openai", "antigravity", "claude", "codex")
 
 
 # claude has no model-list command (`claude models` isn't a thing), so this is a curated list: ids
@@ -56,6 +56,18 @@ def _list_npu_models() -> list[tuple[str, str]]:
     return [(l.strip()[2:].strip(), "FastFlowLM, NPU") for l in out.splitlines() if l.strip().startswith("- ")]
 
 
+def _list_openai_models() -> list[tuple[str, str]]:
+    """Query the local OpenAI-compatible server (AGENT_OPENAI_URL, e.g. OpenVINO, MLX, Genie, llama.cpp, vLLM)."""
+    import httpx
+    from .providers import OPENAI_URL
+    try:
+        r = httpx.get(f"{OPENAI_URL}/v1/models", timeout=3)
+        if r.status_code != 200: return []
+        return [(m["id"], "OpenAI-compat") for m in r.json().get("data", []) if m.get("id")]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return []
+
+
 def _list_codex_models() -> list[tuple[str, str]]:
     """`codex debug models` is codex's own model catalog (JSON, instant - it reads the local cache).
     Only the ones codex itself lists in its picker (visibility "list"), best first; hidden/internal
@@ -77,7 +89,8 @@ _MODEL_CACHE: dict[str, list[tuple[str, str]]] = {}  # per process; only non-emp
 def _fetch_models(provider: str) -> list[tuple[str, str]]:
     from .providers import ClaudeRunner
     if provider not in _MODEL_CACHE:
-        rows = {"ollama": _list_ollama_models, "antigravity": _list_agy_models, "npu": _list_npu_models, "codex": _list_codex_models,
+        rows = {"ollama": _list_ollama_models, "antigravity": _list_agy_models, "npu": _list_npu_models,
+                "openai": _list_openai_models, "codex": _list_codex_models,
                 "claude": lambda: CLAUDE_MODELS if ClaudeRunner().healthy() else []}[provider]()
         if rows: _MODEL_CACHE[provider] = rows
         return rows
