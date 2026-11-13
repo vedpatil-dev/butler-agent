@@ -1,17 +1,21 @@
 $ErrorActionPreference = "Stop"
-$Repo = "git+https://github.com/vedpatil-dev/butler-agent.git@V1"
+$Repo = "vedpatil-dev/butler-agent"
+$Url = "https://github.com/$Repo/releases/latest/download/butler-windows-x86_64.exe"
+$InstallDir = Join-Path $env:LOCALAPPDATA "Programs\Butler"
+$BinPath = Join-Path $InstallDir "butler.exe"
 
-Write-Host "Installing Butler (local-agent)..."
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Write-Host "Downloading Butler executable for Windows..."
+Invoke-WebRequest -Uri $Url -OutFile $BinPath
 
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Host "Installing uv (manages Python 3.12+ automatically)..."
-    irm https://astral.sh/uv/install.ps1 | iex
-    $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($UserPath -notlike "*$InstallDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
+    $env:Path = "$env:Path;$InstallDir"
 }
 
-uv tool install --force --python 3.12 $Repo
-
 Write-Host ""
-Write-Host "Installed! Run:"
+Write-Host "Installed to $BinPath"
+Write-Host "Run:"
 Write-Host "  butler setup --install   # check/install GPU/NPU drivers & runtimes"
 Write-Host "  butler                   # start chatting"
