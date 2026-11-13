@@ -31,10 +31,14 @@ def main():
         "--collect-all", "prompt_toolkit",
         "--paths", str(ROOT),
     ]
+    entry = ROOT / "build" / "pyi_entry.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text("from agent.main import main\n\nif __name__ == '__main__':\n    main()\n")
+
     for src, dst in datas:
         if src.exists():
             cmd += ["--add-data", f"{src}{sep}{dst}"]
-    cmd.append(str(ROOT / "agent" / "main.py"))
+    cmd.append(str(entry))
 
     print("Running:", " ".join(cmd))
     subprocess.check_call(cmd, cwd=ROOT)
